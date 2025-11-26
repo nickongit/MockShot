@@ -1,24 +1,9 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox
 import random
-
-# Club data
-club_data = {
-    "DR": [105, 155, 12, 2500, 250],
-    "3w": [100, 145, 14, 3250, 230],
-    "5w": [95, 140, 16, 3750, 215],
-    "4i": [85, 125, 17, 4500, 195],
-    "5i": [80, 120, 18, 5000, 180],
-    "6i": [75, 115, 19, 5500, 170],
-    "7i": [72, 110, 20, 6000, 160],
-    "8i": [68, 105, 23, 6500, 150],
-    "9i": [65, 100, 26, 7500, 140],
-    "PW": [62, 90, 28, 8500, 130],
-    "GW": [60, 85, 31, 9000, 110],
-    "SW": [58, 80, 34, 10000, 100],
-    "LW": [45, 75, 37, 10500, 90],
-    "PT": [0, 0, 0, 0, 0]  # Placeholder for Putter
-}
+import math
+from src.sim_client import *
+from src.settings import settings, club_data
 
 class GolfApp(tk.Tk):
     def __init__(self):
@@ -30,19 +15,48 @@ class GolfApp(tk.Tk):
         self.selected_club = tk.StringVar()
         self.selected_club.set("DR")
 
+        self.gspro_client = GSProClient()
+        self.connected = False
+
         self.create_widgets()
 
     def create_widgets(self):
+        # IP address input
+        ip_frame = tk.Frame(self, bg="grey")
+        ip_frame.pack(pady=10)
+        tk.Label(ip_frame, text="SIM IP Address:", bg="grey", fg="white", font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        self.ip_entry = tk.Entry(ip_frame, width=20)
+        self.ip_entry.pack(side=tk.LEFT, padx=5)
+        self.ip_entry.insert(0, settings["ip_address"])
+
+        # Port input (new)
+        tk.Label(ip_frame, text="Port:", bg="grey", fg="white", font=("Helvetica", 10, "bold")).pack(side=tk.LEFT)
+        self.port_entry = tk.Entry(ip_frame, width=6)
+        self.port_entry.pack(side=tk.LEFT, padx=5)
+        self.port_entry.insert(0, str(settings["port"]))
+
+        # Connect button
+        self.connect_button = tk.Button(ip_frame, text="Connect", command=self.toggle_connection, bg="blue", fg="white", font=("Helvetica", 10, "bold"))
+        self.connect_button.pack(side=tk.LEFT, padx=5)
+
         # Create club buttons
         button_frame = tk.Frame(self, bg="grey")
         button_frame.pack(pady=10)
 
         for club in club_data.keys():
-            button = tk.Radiobutton(button_frame, text=club, variable=self.selected_club, value=club,
+            club_container = tk.Frame(button_frame, bg="grey")
+            club_container.pack(side=tk.LEFT, padx=5)
+
+            button = tk.Radiobutton(club_container, text=club, variable=self.selected_club, value=club,
                                     indicatoron=0, width=3, height=1, command=self.update_club_data,
                                     bg="grey", fg="lightgrey", font=("Helvetica", 10, "bold"),
                                     selectcolor="darkgrey")
-            button.pack(side=tk.LEFT, padx=5)
+            button.pack()
+
+            carry_distance = club_data[club][4]
+            carry_label = tk.Label(club_container, text=f"{carry_distance}y", bg="grey", fg="lightgrey",
+                                   font=("Helvetica", 8))
+            carry_label.pack()
 
         # Default club data label
         self.default_data_label = tk.Label(self, text="Default club data", font=("Helvetica", 12, "bold"), bg="grey", fg="white")
@@ -105,7 +119,7 @@ class GolfApp(tk.Tk):
         self.actual_shot_frame = tk.Frame(self, relief="solid", borderwidth=1, bg="grey")
         self.actual_shot_frame.pack(pady=10)
 
-        self.actual_shot_titles = ["Club", "Club Speed", "Ball Speed", "Launch Angle", "Launch Dir.", "Spin Rate", "Spin Axis"]
+        self.actual_shot_titles = ["Club", "Club Speed", "Ball Speed", "Launch Angle", "Launch Dir.", "Back Spin", "Side Spin"]
         self.actual_shot_labels = []
         for title in self.actual_shot_titles:
             title_frame = tk.Frame(self.actual_shot_frame, bg="grey")
@@ -127,6 +141,39 @@ class GolfApp(tk.Tk):
         for i, label in enumerate(self.default_data_labels):
             label.config(text=labels_text[i])
 
+    def toggle_connection(self):
+        if self.connected:
+            self.disconnect()
+        else:
+            self.connect()
+
+    def connect(self):
+        logging.debug("Connecting to GSPro")
+        ip_address = self.ip_entry.get()
+        port_str = self.port_entry.get()
+        try:
+            port = int(port_str)
+        except Exception as e:
+            msg = f"Invalid port: {port_str}"
+            messagebox.showerror("Connection Error", msg)
+            logging.error(msg)
+            return
+        try:
+            self.gspro_client.init_socket(ip_address=ip_address, port=port)
+            self.connected = True
+            self.connect_button.config(text="Disconnect", bg="red")
+            logging.info("Connected to GSPro")
+        except Exception as e:
+            msg = f"Failed to connect to GSPro: {e}"
+            messagebox.showerror("Connection Error", msg)
+            logging.error(msg)
+
+    def disconnect(self):
+        if self.gspro_client:
+            self.gspro_client.terminate_session()
+            self.connected = False
+            self.connect_button.config(text="Connect", bg="blue")
+            logging.info("Disconnected from GSPro")
 
     def calculate_shot(self):
         club = self.selected_club.get()
@@ -137,6 +184,9 @@ class GolfApp(tk.Tk):
         actual_ball_speed = self.randomize_value(data[1] * shot_percent)
         actual_spin_rate = self.randomize_value(data[3] * shot_percent)
         actual_spin_axis = self.randomize_value(self.spin_axis.get(), is_zero_allowed=True)
+        spin_axis_rad = math.radians(actual_spin_axis)
+        actual_back_spin = actual_spin_rate * math.cos(spin_axis_rad)
+        actual_side_spin = actual_spin_rate * math.sin(spin_axis_rad)
         actual_launch_direction = self.randomize_value(self.launch_direction.get(), is_zero_allowed=True)
 
         labels_text = [
@@ -145,8 +195,8 @@ class GolfApp(tk.Tk):
             round(actual_ball_speed),
             f"{data[2]:.1f}°",
             f"{actual_launch_direction:.1f}°",
-            round(actual_spin_rate),
-            f"{actual_spin_axis:.1f}°"
+            round(actual_back_spin),
+            round(actual_side_spin)
         ]
         for i, label in enumerate(self.actual_shot_labels):
             label.config(text=labels_text[i])
@@ -159,6 +209,26 @@ class GolfApp(tk.Tk):
         self.launch_direction.set(0)
         self.spin_axis.set(0)
 
+        if self.connected:
+            # Round values to safe precision for GSPro
+            send_ball_speed = round(actual_ball_speed, 2)
+            send_spin_axis = round(actual_spin_axis, 2)
+            send_total_spin = int(round(actual_spin_rate))
+            send_hla = round(actual_launch_direction, 2)
+            send_vla = int(round(data[2]))
+            send_back_spin = round(actual_back_spin)
+            send_side_spin = round(actual_side_spin)
+
+            self.gspro_client._shot_data.new_shot(
+                speed=send_ball_speed,
+                spin_axis=send_spin_axis,
+                total_spin=send_total_spin,
+                hla=send_hla,
+                vla=send_vla,
+                back_spin=send_back_spin,
+                side_spin=send_side_spin,
+            )
+            self.gspro_client.send_shot()
 
     def randomize_value(self, value, is_zero_allowed=False):
         if value == 0 and is_zero_allowed:
@@ -171,5 +241,6 @@ class GolfApp(tk.Tk):
         self.hit_shot_button.config(bg=new_color)
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     app = GolfApp()
     app.mainloop()
