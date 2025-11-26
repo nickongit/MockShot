@@ -12,7 +12,7 @@ MockShot provides a small graphical interface to:
 3. Generate a mock shot with club/ball speed, launch angles and spin values.
 
 ## Run the prebuilt executable
-1. Download `MockShot.exe` and place it where convenient.
+1. Download `dist/MockShot.exe` and place it where convenient.
 2. Run the executable directly:
    - Double\-click `MockShot.exe` or run in PowerShell:
      ```powershell
